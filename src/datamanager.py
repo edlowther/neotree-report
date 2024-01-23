@@ -37,10 +37,19 @@ class DataManager():
                        Datetimedeath     = pd.to_datetime(df['Datetimedeath'],     utc=True))
         # Age at test is age at admission plus difference between time that test was taken and time of admission:
         df['age_at_test'] = df['Age'] + (df['Neolab_datebct'] - df['Datetimeadmission']) / pd.Timedelta(hours=1)
+        df['eons_diagnosis'] = df['Diagdis1'] == 'EONS'
+        df['eons_cause_of_death'] = df['Causedeath'] == 'EONS'
         df = df[-df['Neolab_finalbcresult'].isin(['Contaminant', 'Awaiting Final Result', 'Rej'])]
-        df['bc_positive'] = df['Neolab_finalbcresult'].isin(['Pos', 'PosP'])
+        def categorise_bc_result(x):
+            if x in ['Pos', 'PosP']:
+                return True
+            elif x in ['Neg', 'NegP']:
+                return False
+            else:
+                return None
+        df['bc_positive'] = df['Neolab_finalbcresult'].apply(categorise_bc_result)
         def get_target(row):
-            if row['Diagdis1'] == 'EONS' or row['Causedeath'] == 'EONS':
+            if row['eons_diagnosis'] or row['eons_cause_of_death']:
                 return True
             elif row['bc_positive']:
                 return self.is_eons_bc_result(row)
@@ -50,7 +59,7 @@ class DataManager():
         if self.reduce_cardinality:
             def simplify_vomiting(x):
                 if pd.isna(x):
-                    return np.nan
+                    return None
                 elif x in ['Poss', 'No']:
                     return x
                 else:
@@ -58,7 +67,7 @@ class DataManager():
             df['Vomiting'] = df['Vomiting'].apply(simplify_vomiting)
             def simplify_norm_values(x):
                 if pd.isna(x):
-                    return np.nan
+                    return None
                 elif x == 'Norm':
                     return x
                 else:
@@ -67,7 +76,7 @@ class DataManager():
             df['Abdomen'] = df['Abdomen'].apply(simplify_norm_values)
             def simplify_signs(x):
                 if pd.isna(x):
-                    return np.nan
+                    return None
                 elif x == 'None':
                     return 'no_signs'
                 else:
@@ -115,7 +124,7 @@ class DataManager():
             dropna=False
         ).head(1).reset_index(drop=True)
         
-    def get_X_y(self, X_cols, seed, y_label='bc_positive'): 
+    def get_X_y(self, X_cols, seed, y_label='bc_positive_or_diagnosis_or_cause_of_death'): 
         """Return features and target according to preferences set out in instantiation of class""" 
         df_pos = self.df[self.df[y_label]]
         df_neg = self.df[~self.df[y_label]]
