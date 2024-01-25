@@ -130,7 +130,7 @@ class DataManager():
         df_neg = self.df[~self.df[y_label]]
         # Get a perfectly balanced target:
         # self.df = pd.concat([resample(df_neg, replace=False, n_samples=len(df_pos)), df_pos])
-        X = self.df[X_cols]
+        X = self.df[X_cols].copy()
         y = self.df[y_label]
         
         continuous_colnames = X.select_dtypes(['int64', 'float64']).columns
