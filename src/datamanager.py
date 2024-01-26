@@ -5,10 +5,61 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import resample
 import re
 
+def case_categoriser(grp, drop_bad_age_test_results):
+    if any(grp['eons_diagnosis']) or any(grp['eons_cause_of_death']):
+        grp['bc_positive_or_diagnosis_or_cause_of_death'] = True
+        grp['description'] = 'diagnosis_or_death'
+    else:
+        if drop_bad_age_test_results:
+            valid_grp = grp.loc[
+                (~pd.isna(grp['age_at_test'])) & 
+                (grp['age_at_test'] >= 0) & 
+                (grp['age_at_test'] < 72)
+            ]
+        else: 
+            valid_grp = grp.loc[
+                ~pd.isna(grp['Neolab_finalbcresult'])
+            ]
+        if len(valid_grp) == 0:
+            grp['bc_positive_or_diagnosis_or_cause_of_death'] = False
+            n_tests_removed = (~pd.isna(grp['Neolab_finalbcresult'])).sum() - len(valid_grp)
+            grp['description'] = 'no_tests_taken' if n_tests_removed == 0 else 'all_tests_excluded'
+        else:
+            definitive_result_found = False
+            for idx, row in valid_grp.iterrows():
+                if row['bc_positive'] and row['Neolab_status'] == 'FINAL':
+                    grp['bc_positive_or_diagnosis_or_cause_of_death'] = True
+                    definitive_result_found = True
+                    grp['description'] = 'pos_result_found'
+            if not definitive_result_found:
+                for idx, row in valid_grp.iterrows():
+                    if not row['bc_positive'] and row['Neolab_status'] == 'FINAL':
+                        grp['bc_positive_or_diagnosis_or_cause_of_death'] = False
+                        definitive_result_found = True
+                        grp['description'] = 'neg_result_found'
+            if not definitive_result_found:
+                for idx, row in valid_grp.iterrows():
+                    if row['bc_positive'] and row['Neolab_status'] == 'PRELIMINARY':
+                        grp['bc_positive_or_diagnosis_or_cause_of_death'] = True
+                        definitive_result_found = True
+                        grp['description'] = 'pos_result_found'
+            if not definitive_result_found:
+                for idx, row in valid_grp.iterrows():
+                    if not row['bc_positive'] and row['Neolab_status'] == 'PRELIMINARY':
+                        grp['bc_positive_or_diagnosis_or_cause_of_death'] = False
+                        definitive_result_found = True
+                        grp['description'] = 'neg_result_found'
+            if not definitive_result_found:
+                grp['bc_positive_or_diagnosis_or_cause_of_death'] = False
+                grp['description'] = 'confusing'
+    return grp
+        
+        
+
 class DataManager(): 
     """Convenient wrapper around source data.
     """
-    def __init__(self, filepath, scale=True, dummies=True, drop_first=True, reduce_cardinality=False): 
+    def __init__(self, filepath, scale=True, dummies=True, drop_first=True, reduce_cardinality=False, drop_bad_age_test_results=True): 
         """Create instance of class.
         
         Args: 
@@ -19,6 +70,7 @@ class DataManager():
         """
         self.filepath = filepath
         self.reduce_cardinality = reduce_cardinality
+        self.drop_bad_age_test_results = drop_bad_age_test_results
         self.df = self._load_data()
         self.scale = scale
         self.dummies = dummies
@@ -41,21 +93,9 @@ class DataManager():
         df['eons_cause_of_death'] = df['Causedeath'] == 'EONS'
         df = df[-df['Neolab_finalbcresult'].isin(['Contaminant', 'Awaiting Final Result', 'Rej'])]
         def categorise_bc_result(x):
-            if x in ['Pos', 'PosP']:
-                return True
-            elif x in ['Neg', 'NegP']:
-                return False
-            else:
-                return None
+            return x in ['Pos', 'PosP']
         df['bc_positive'] = df['Neolab_finalbcresult'].apply(categorise_bc_result)
-        def get_target(row):
-            if row['eons_diagnosis'] or row['eons_cause_of_death']:
-                return True
-            elif row['bc_positive']:
-                return self.is_eons_bc_result(row)
-            else:
-                return False
-        df['bc_positive_or_diagnosis_or_cause_of_death'] = df.apply(get_target, axis=1)
+        df = pd.concat([case_categoriser(grp, self.drop_bad_age_test_results) for _, grp in df.groupby('Uid')])
         if self.reduce_cardinality:
             def simplify_vomiting(x):
                 if pd.isna(x):
@@ -84,19 +124,6 @@ class DataManager():
             df['Signsrd'] = df['Signsrd'].apply(simplify_signs)
             df['Dangersigns'] = df['Dangersigns'].apply(simplify_signs)
         return df
-    
-    def is_eons_bc_result(self, row, eons_cutoff=72):
-        """Assign cases to negative class when it cannot be determined whether it was an early-onset or late-onset case"""
-        # Test taken but age cannot be determined:
-        tested_but_age_is_na = (~pd.isna(row['Neolab_finalbcresult'])) & (pd.isna(row['age_at_test']))
-        # Test taken after early-onset threshold:
-        tested_after_threshold = row['age_at_test'] > eons_cutoff
-        # Age is below zero, suggesting data-entry error:
-        negative_age_at_test = row['age_at_test'] < 0
-        if tested_but_age_is_na or tested_after_threshold or negative_age_at_test:
-            return False
-        else:
-            return True
         
     def remove_outliers(self):
         """Remove cases where any value for selected variables appears to be an outlier"""
@@ -113,16 +140,9 @@ class DataManager():
         self.df = self.df.reset_index(drop=True)[not_outlier_mask]
         
     def remove_duplicate_predictors(self, X_cols, y_label):
-        """Some cases have more than one episode with differing outcomes for the same predictor sets. This function retains only
-        the worst-case outcome, e.g. if there is a negative test one day but a positive test two days later, the data_manager keeps
-        only the row containing the positive test"""
-        self.df = self.df.sort_values(
-            ['Neolab_status', y_label],
-            ascending=[True, False]
-        ).groupby(
-            ['Uid'] + X_cols,
-            dropna=False
-        ).head(1).reset_index(drop=True)
+        """All cases should now have a unique set of predictors and composite outcome variable"""
+        assert len(self.df.drop_duplicates(X_cols + ['Uid', y_label])) == len(self.df['Uid'].unique())
+        self.df = self.df.drop_duplicates(X_cols + ['Uid', y_label])
         
     def get_X_y(self, X_cols, seed, y_label='bc_positive_or_diagnosis_or_cause_of_death'): 
         """Return features and target according to preferences set out in instantiation of class""" 

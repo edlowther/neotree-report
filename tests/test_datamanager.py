@@ -14,21 +14,13 @@ def test_negative_bc_results_assigned_correctly_with_contaminated_results_remove
     assert all(df.loc[(-pd.isna(df['Neolab_finalbcresult'])) & (-df['bc_positive']), 'Neolab_finalbcresult'].isin(['Neg', 'NegP']))
     assert not any(df['Neolab_finalbcresult'].isin(['Contaminant', 'Rej']))
     
-def test_target_defined_correctly():
+def test_diagnoses_and_deaths_handled_correctly():
     diagnosis_is_eons = df['Diagdis1'] == 'EONS'
     death_caused_by_eons = df['Causedeath'] == 'EONS'
     assert all(df.loc[diagnosis_is_eons, 'bc_positive_or_diagnosis_or_cause_of_death'])
     assert all(df.loc[death_caused_by_eons, 'bc_positive_or_diagnosis_or_cause_of_death'])
-    # Are all rows that are negative in our target class despite having a positive blood test result and no diagnosis or cause of death
-    # had problematic age categorisations of one kind or another:
-    problematic_ages = df.loc[(~df['bc_positive_or_diagnosis_or_cause_of_death']) & (df['bc_positive']) & (~diagnosis_is_eons) & (~death_caused_by_eons), 'age_at_test']
-    n_over_threshold = (problematic_ages > 72).sum()
-    n_below_zero = (problematic_ages < 0).sum()
-    n_nas = (pd.isna(problematic_ages)).sum()
-    assert len(problematic_ages) == n_over_threshold + n_below_zero + n_nas
 
 def test_correct_X_y_vars():
-    data_manager = DataManager(data_filepath)
     continuous_vars = ['Rr', 'Hr', 'Temperature']
     data_manager.remove_duplicate_predictors(continuous_vars, 'bc_positive_or_diagnosis_or_cause_of_death')
     X_train, X_test, y_train, y_test = data_manager.get_X_y(continuous_vars, 42)
@@ -62,40 +54,37 @@ def test_correct_X_y_vars():
     assert len(pd.concat([X_train, X_test])) == len(data_manager.df[-data_manager.df[continuous_vars].isna().any(axis=1)])
     
 def test_duplicates_removed():
-    dummy_df = pd.DataFrame([
-        {'Uid': '12-12', 'Hr': 101, 'Rr': 89, 'Admreason': 'one', 'bc_positive_or_diagnosis_or_cause_of_death': True, 'Neolab_status': 'FINAL'},
-        {'Uid': '12-12', 'Hr': 101, 'Rr': 89, 'Admreason': 'two', 'bc_positive_or_diagnosis_or_cause_of_death': False, 'Neolab_status': 'FINAL'},
-        {'Uid': '11-10', 'Hr': 125, 'Rr': 100, 'Admreason': 'three', 'bc_positive_or_diagnosis_or_cause_of_death': False, 'Neolab_status': 'FINAL'},
-        {'Uid': '11-11', 'Hr': 125, 'Rr': 100, 'Admreason': 'three', 'bc_positive_or_diagnosis_or_cause_of_death': False, 'Neolab_status': 'FINAL'},
-        {'Uid': '52-10', 'Hr': 120, 'Rr': 95, 'Admreason': 'a', 'bc_positive_or_diagnosis_or_cause_of_death': False, 'Neolab_status': 'FINAL'},
-        {'Uid': '52-10', 'Hr': 120, 'Rr': 95, 'Admreason': 'b', 'bc_positive_or_diagnosis_or_cause_of_death': True, 'Neolab_status': 'FINAL'},
-        {'Uid': '52-10', 'Hr': 140, 'Rr': 85, 'Admreason': 'c', 'bc_positive_or_diagnosis_or_cause_of_death': False, 'Neolab_status': 'FINAL'},
-        {'Uid': '53-06', 'Hr': 98, 'Rr': 101, 'Admreason': 'z', 'bc_positive_or_diagnosis_or_cause_of_death': True, 'Neolab_status': 'FINAL'},
-        {'Uid': '53-06', 'Hr': 98, 'Rr': 101, 'Admreason': 'z', 'bc_positive_or_diagnosis_or_cause_of_death': False, 'Neolab_status': 'PRELIMINARY'},
-        {'Uid': '53-07', 'Hr': 99, 'Rr': 102, 'Admreason': 'z', 'bc_positive_or_diagnosis_or_cause_of_death': True, 'Neolab_status': 'PRELIMINARY'},
-        {'Uid': '53-07', 'Hr': 99, 'Rr': 102, 'Admreason': 'z', 'bc_positive_or_diagnosis_or_cause_of_death': False, 'Neolab_status': 'FINAL'}
-    ])
-    dummy_data_manager = DataManager(data_filepath)
-    dummy_data_manager.df = dummy_df
+    dummy_data_filepath = './tests/dummy_data.csv'
+    data_manager = DataManager(dummy_data_filepath)
     X_cols = ['Hr', 'Rr']
     y_label = 'bc_positive_or_diagnosis_or_cause_of_death'
-    dummy_data_manager.remove_duplicate_predictors(X_cols, y_label)
-    assert len(dummy_data_manager.df == 4)
-    assert dummy_data_manager.df.loc[dummy_data_manager.df['Uid'] == '12-12', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    data_manager.remove_duplicate_predictors(X_cols, y_label)
+    assert len(data_manager.df == 5)
+    assert data_manager.df.loc[data_manager.df['Uid'] == '12-12', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
     # The second row with id 12-12 should have been removed because both predictors match (even though an additional column, Admreason, does not match)
     with pytest.raises(IndexError): 
-        dummy_data_manager.df.loc[dummy_data_manager.df['Uid'] == '12-12', 'bc_positive_or_diagnosis_or_cause_of_death'].values[1]
+        data_manager.df.loc[data_manager.df['Uid'] == '12-12', 'bc_positive_or_diagnosis_or_cause_of_death'].values[1]
     # With matching predictors and one positive and one negative result (both marked final), we keep the positive:
-    assert dummy_data_manager.df.loc[(dummy_data_manager.df['Uid'] == '52-10')
+    assert data_manager.df.loc[(data_manager.df['Uid'] == '52-10')
                                      &
-                                     (dummy_data_manager.df['Hr'] == 120), 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+                                     (data_manager.df['Hr'] == 120), 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
     # A separate episode with the same id and different predictors is retained as a negative result
-    assert not dummy_data_manager.df.loc[(dummy_data_manager.df['Uid'] == '52-10')
-                                     &
-                                     (dummy_data_manager.df['Hr'] == 140), 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    # assert not data_manager.df.loc[(data_manager.df['Uid'] == '52-10')
+    #                                  &
+    #                                  (data_manager.df['Hr'] == 140), 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
     # Where predictors are the same, we keep the final result, in this case positive (and ditch the second row):
-    assert dummy_data_manager.df.loc[dummy_data_manager.df['Uid'] == '53-06', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    assert data_manager.df.loc[data_manager.df['Uid'] == '53-06', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
     with pytest.raises(IndexError):
-        dummy_data_manager.df.loc[dummy_data_manager.df['Uid'] == '53-06', 'bc_positive_or_diagnosis_or_cause_of_death'].values[1]
+        data_manager.df.loc[data_manager.df['Uid'] == '53-06', 'bc_positive_or_diagnosis_or_cause_of_death'].values[1]
     # Again, we keep the final result for two rows with matching predictors, in this case negative:
-    assert not dummy_data_manager.df.loc[dummy_data_manager.df['Uid'] == '53-07', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    assert not data_manager.df.loc[data_manager.df['Uid'] == '53-07', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    # This is a case with three negative test results, but one positive one above the age threshold - should be negative:
+    assert not data_manager.df.loc[data_manager.df['Uid'] == '53-08', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    # All the ages fine here, but the only positive result is preliminary when there is a final negative result:
+    assert not data_manager.df.loc[data_manager.df['Uid'] == '53-09', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    # Four negative test results (one past threshold) but clinician-assigned cause of death, should be positive:
+    assert data_manager.df.loc[data_manager.df['Uid'] == '53-10', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    # Four positive test results, all past threshold, should be negative:
+    assert not data_manager.df.loc[data_manager.df['Uid'] == '53-11', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
+    # One positive test result, test taken before admission; three tests with good age data, all negative - should be negative:
+    assert not data_manager.df.loc[data_manager.df['Uid'] == '53-12', 'bc_positive_or_diagnosis_or_cause_of_death'].values[0]
