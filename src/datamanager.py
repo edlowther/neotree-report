@@ -5,8 +5,18 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import resample
 import re
 
-def case_categoriser(grp, drop_bad_age_test_results):
-    if any(grp['eons_diagnosis']) or any(grp['eons_cause_of_death']):
+def case_categoriser(grp, drop_bad_age_test_results, include_diagnosis_and_cause_of_death):
+    """Helper function to encode the logic assiging groups of rows having a unique id (Uid) to the composite outcome variable
+    
+    Args: 
+        grp (pandas DataFrameGroupBy): Rows from source data groupbed by Uid
+        drop_bad_age_test_results (bool): Whether NAs or LONS cases should be included in the outcome variable
+        include_diagnosis_and_cause_of_death (bool): Whether the clinician diagnosis or cause of death values are included in outcome
+        
+    Returns: 
+        pandas DataFrameGroupBy with outcome assigned to `bc_positive_or_diagnosis_or_cause_of_death` column
+    """
+    if include_diagnosis_and_cause_of_death and (any(grp['eons_diagnosis']) or any(grp['eons_cause_of_death'])):
         grp['bc_positive_or_diagnosis_or_cause_of_death'] = True
         grp['description'] = 'diagnosis_or_death'
     else:
@@ -59,7 +69,7 @@ def case_categoriser(grp, drop_bad_age_test_results):
 class DataManager(): 
     """Convenient wrapper around source data.
     """
-    def __init__(self, filepath, scale=True, dummies=True, drop_first=True, reduce_cardinality=False, drop_bad_age_test_results=True): 
+    def __init__(self, filepath, scale=True, dummies=True, drop_first=True, reduce_cardinality=False, drop_bad_age_test_results=True, include_diagnosis_and_cause_of_death=True): 
         """Create instance of class.
         
         Args: 
@@ -67,10 +77,14 @@ class DataManager():
             scale (bool): Whether to scale continuous features using scikit-learn's StandardScaler. Defaults to True
             dummies (bool): Whether to convert categorcal variable to dummy variables or use as is. Defaults to True
             drop_first (bool): If converting to dummies, whether to drop the first dummy. Defaults to True
+            reduce_cardinality (bool): Whether to group features with high cardinality into buckets. Defaults to False
+            drop_bad_age_test_results (bool): Whether NAs or LONS cases should be included in the outcome variable. Defaults to True
+            include_diagnosis_and_cause_of_death (bool): Whether the clinician diagnosis or cause of death values are included in outcome. Defaults to True
         """
         self.filepath = filepath
         self.reduce_cardinality = reduce_cardinality
         self.drop_bad_age_test_results = drop_bad_age_test_results
+        self.include_diagnosis_and_cause_of_death = include_diagnosis_and_cause_of_death
         self.df = self._load_data()
         self.scale = scale
         self.dummies = dummies
@@ -95,7 +109,7 @@ class DataManager():
         def categorise_bc_result(x):
             return x in ['Pos', 'PosP']
         df['bc_positive'] = df['Neolab_finalbcresult'].apply(categorise_bc_result)
-        df = pd.concat([case_categoriser(grp, self.drop_bad_age_test_results) for _, grp in df.groupby('Uid')])
+        df = pd.concat([case_categoriser(grp, self.drop_bad_age_test_results, self.include_diagnosis_and_cause_of_death) for _, grp in df.groupby('Uid')])
         if self.reduce_cardinality:
             def simplify_vomiting(x):
                 if pd.isna(x):
